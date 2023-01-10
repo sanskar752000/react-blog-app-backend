@@ -2,6 +2,12 @@ import fs from 'fs'
 import admin from 'firebase-admin'
 import express, { application } from "express"
 import { db, connectToDb } from "./db.js"
+import { fileURLToPath } from 'url'
+import 'dotenv/config' // automatically take username and password for db from .env file
+import path from 'path'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const credentials = JSON.parse(
     fs.readFileSync('./credentials.json')
@@ -12,6 +18,11 @@ admin.initializeApp({
 
 const app = express()
 app.use(express.json())
+app.use(express.static(path.join(__dirname, '../build')))
+
+app.get(/^(?!\/api).+/, (req, res) => {
+    res.sendFile(path.join(__dirname, '../build/index'))
+})
 
 //this middleware get the authtoken if present
 // means the user is logged in
@@ -110,10 +121,11 @@ function findArticle(name) {
     return articles.find(arc => arc.name === name)
 }
 
+const PORT = process.env.PORT || 8000
 
 connectToDb(() => {
     console.log('Database successfully connected!')
-    app.listen(8000, () => {
-        console.log('Server is listening on port 8000')
+    app.listen(PORT, () => {
+        console.log('Server is listening on port ' + PORT)
     });
 })
