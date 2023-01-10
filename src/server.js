@@ -1,57 +1,78 @@
+import fs from 'fs'
+import admin from 'firebase-admin'
 import express, { application } from "express"
 import { db, connectToDb } from "./db.js"
+
+const credentials = JSON.parse(
+    fs.readFileSync('./credentials.json')
+)
+admin.initializeApp({
+    credential: admin.credential.cert(credentials),
+})
 
 const app = express()
 app.use(express.json())
 
+//this middleware get the authtoken if present
+// means the user is logged in
+app.use( async (req, res, next) => {
+    const { authtoken } = req.headers
+    if(authtoken) {
+        try {
+            req.user = await admin.auth().verifyIdToken(authtoken)
+        } catch(e) {
+            return res.sendStatus(400);
+        }
+    }
 
-//This is sample data created before database comes into the picture
-// const articles = [{
-//     name: 'learn-react',
-//     upvotes: 0,
-//     comments: []
-// }, {
-//     name: 'learn-node',
-//     upvotes: 0,
-//     comments: []
-// }, {
-//     name: 'mongodb',
-//     upvotes: 0,
-//     comments: []
-// }]
-
-// app.post('/hello', (req, res) => {
-//     console.log(req.body)
-//     res.send('Hello!')
-// });
-
-// app.get('/hello/:name', (req, res) => {
-//     const { name } = req.params
-//     res.send(`Hello ${name}!!`)
-// })
+    req.user = req.user || {};
+    // this below callback function specifies that this middleware process is completed
+    next();
+})
 
 app.get('/api/articles/:name', async (req, res) => {
     const { name } = req.params
+    const { uid } = req.user
 
     const article = await db.collection('articles').findOne({ name })
     
     if(article) {
+        const upvoteIds = article.upvoteIds || []
+        article.canUpvote = uid && !upvoteIds.includes(uid);
+        // console.log(article);
         res.json(article)
     } else {
         res.sendStatus(404)
     }
 })
 
+// This middleware specifies that 
+// if user is logged in then give access further else it's unauthorized
+app.use((req, res, next) => {
+    if(req.user) {
+        next();
+    } else {
+        res.sendStatus(401);
+    }
+})
+
 app.put('/api/articles/:name/upvote', async (req, res) => {
     const { name } = req.params
-
-    await db.collection('articles').updateOne({ name }, {
-        $inc: { upvotes: 1 }
-    })
-
+    const { uid } = req.user
     const article = await db.collection('articles').findOne({ name })
+    
     if(article) {
-        res.send(article)
+        const upvoteIds = article.upvoteIds || []
+        const canUpvote = uid && !upvoteIds.includes(uid);
+
+        if(canUpvote) {
+            await db.collection('articles').updateOne({ name }, {
+                $inc: { upvotes: 1 },
+                $push: { upvoteIds: uid }
+            })
+        }
+        const updatedArticle = await db.collection('articles').findOne({ name })
+        res.send(updatedArticle)
     } else {
         res.send('The article does not exist')
     }
@@ -59,10 +80,11 @@ app.put('/api/articles/:name/upvote', async (req, res) => {
 
 app.post('/api/articles/:name/postComment', async (req, res) => {
     const { name } = req.params
-    const { postedBy, text } = req.body
+    const { text } = req.body
+    const { email } = req.user
 
     await db.collection('articles').updateOne({ name }, {
-        $push: { comments: { postedBy, text }}
+        $push: { comments: { postedBy: email, text }}
     })
 
     const article = await db.collection('articles').findOne({ name })
